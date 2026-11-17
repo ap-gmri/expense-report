@@ -230,6 +230,12 @@ input[type=number]::-webkit-outer-spin-button,input[type=number]::-webkit-inner-
 .modal-ic{width:44px;height:44px;border-radius:50%;background:var(--danger-soft);color:var(--danger);display:grid;place-items:center}
 .modal-ic svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 body.modal-open{overflow:hidden}
+.sub-tbl td{vertical-align:middle;padding:6px 8px}
+.sub-tbl input[type=text],.sub-tbl input[type=number]{width:100%;padding-top:8px;padding-bottom:8px;border-radius:10px}
+.sub-tbl .prefix input{width:100%;text-align:right}
+.sub-tbl tfoot td{font-weight:700}
+.icon-btn{padding:2px 10px!important;font-size:18px;line-height:1}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
 /* ---------- polish layer: softer, rounded, modern ---------- */
 body{background:var(--page)}
 .slidehead{background:var(--surface)}
@@ -524,7 +530,7 @@ function sortLocs(it) {
   const first = it.locs[0], rest = it.locs.slice(1).sort((a, b) => (a.from || "9999").localeCompare(b.from || "9999"));
   it.locs = [first, ...rest];
 }
-function normItem(it) { return normPerDiem(normMileage(it)); }
+function normItem(it) { return normSubLines(normPerDiem(normMileage(it))); }
 function dateRangeText(it) { return it.multiDay && it.dateEnd ? `${fmtDate(it.date)} to ${fmtDate(it.dateEnd)}` : fmtDate(it.date); }
 function routeText(it) {
   const pts = (it.stops || []).map(st => (String(st.name || "").trim() ? st.name.trim() + ", " : "") + stopAddr(st));
@@ -596,8 +602,7 @@ function itemErrors(it) {
     if (it.foreign && !String(it.fxNote || "").trim()) e.fxNote = "Enter the original amount and exchange rate.";
     if (it.noReceipt) {
       if (!String(it.subVendor || "").trim()) e.subVendor = "Enter the vendor.";
-      if (!String(it.subItems || "").trim()) e.subItems = "List what you bought.";
-      if (!String(it.subReason || "").trim()) e.subReason = "Explain why there is no receipt.";
+      if (!(it.subLines || []).some(l => String(l.item || "").trim())) e.subItems = "List at least one item you bought.";
     }
   } else if (it.type === "mileage") {
     if (!it.date) e.date = it.multiDay ? "Enter the first day of the trip." : "Enter the date you drove.";
@@ -647,7 +652,7 @@ function reviewIssues() {
     const ds = [itemDate(it), it.type === "perdiem" ? it.end : it.type === "mileage" && it.multiDay ? it.dateEnd : ""].filter(Boolean);
     return ds.length && !ds.some(d => d.slice(0, 7) === state.period);
   });
-  if (outside) out.push({ k: "info", t: "Some of your expenses are dated outside the period you selected for this expense report." });
+  if (outside) out.push({ k: "info", t: "Some of your expenses are dated outside the selected period of time." });
   return out;
 }
 
@@ -782,6 +787,24 @@ function mileDatesHTML(it, e) {
     ? `${inputField(it, e, "date", "First day", { type: "date" })}${inputField(it, e, "dateEnd", "Last day", { type: "date" })}`
     : `${inputField(it, e, "date", "Date driven", { type: "date" })}`;
 }
+function dropWrapHTML(it) {
+  const L = it.noReceipt ? RECEIPT_LABELS.sub : RECEIPT_LABELS.rec;
+  return `<div id="drop-wrap">${dropHTML(L[0], L[1])}</div>`;
+}
+function subLinesHTML(it) {
+  return (it.subLines || []).map((l, i) => `<tr>
+    <td><input type="text" data-sub="${i}" data-sk="item" value="${esc(l.item)}" placeholder="${i === 0 ? "e.g. Day parking" : ""}" aria-label="Item ${i + 1}"></td>
+    <td class="r"><div class="prefix"><span>$</span><input type="number" data-sub="${i}" data-sk="amount" value="${esc(l.amount)}" min="0" step="0.01" inputmode="decimal" aria-label="Amount for item ${i + 1}"></div></td>
+    <td class="c">${(it.subLines || []).length > 1 ? `<button class="btn ghost danger icon-btn" type="button" data-act="rm-subline" data-i="${i}" aria-label="Remove line ${i + 1}">×</button>` : ""}</td></tr>`).join("");
+}
+function subTotal(it) { return round2((it.subLines || []).reduce((a, l) => a + (Number(l.amount) || 0), 0)); }
+function normSubLines(it) {
+  if (it.type === "receipt" && !Array.isArray(it.subLines)) {
+    it.subLines = [{ item: String(it.subItems || ""), amount: "" }];
+    delete it.subItems;
+  }
+  return it;
+}
 function stopsHTML(it, e) {
   const n = it.stops.length;
   const rows = it.stops.map((st, i) => {
@@ -808,22 +831,31 @@ function editorHTML() {
         ${inputField(it, e, "purpose", "Business purpose", { cls: "span2" })}
         <div class="field"><label for="e-amount">Amount (US dollars)</label><div class="prefix"><span>$</span><input type="number" id="e-amount" data-f="amount" value="${esc(it.amount ?? "")}" min="0" step="0.01" inputmode="decimal" class="${inv(e, "amount")}"></div>${fieldErr(e, "amount")}</div>
       </div>
-      <div class="note warn" id="alcohol-note" ${MEAL_WORDS.test(it.description || "") ? "" : "hidden"}><span class="ic">!</span><p><b>Leave alcohol out of the amount.</b> Alcohol can't be charged to federal or state funded projects. Take off the drinks and their share of tax and tip, or ask the restaurant to put alcohol on a separate bill.</p></div>
       <label class="check"><input type="checkbox" id="e-foreign" data-f="foreign" ${it.foreign ? "checked" : ""}><span>I paid in a foreign currency</span></label>
       <div class="subform" id="fx-block" ${it.foreign ? "" : "hidden"}>
         ${inputField(it, e, "fxNote", "Original amount and exchange rate", { hint: "If you have any documents showing what the amount paid in USD actually was, such as a line from a card or bank statement, please attach along with the actual receipt. If not available, please list the rate you used for conversion, e.g. “€84.00 at 1.09 = $91.56”." })}
       </div>
-      ${dropHTML(it.noReceipt ? RECEIPT_LABELS.sub[0] : RECEIPT_LABELS.rec[0], it.noReceipt ? RECEIPT_LABELS.sub[1] : RECEIPT_LABELS.rec[1])}
+      <div id="drop-slot-top">${it.noReceipt ? "" : dropWrapHTML(it)}</div>
       <label class="check"><input type="checkbox" id="e-noReceipt" data-f="noReceipt" ${it.noReceipt ? "checked" : ""}><span>I don't have a receipt for this. Fill in a substitute receipt instead.</span></label>
       <div class="subform stack" id="sub-block" ${it.noReceipt ? "" : "hidden"}>
-        <p class="muted small">This replaces the Substitute Expense Receipt form. It prints as its own page in your PDF.</p>
+        <p class="muted small">This will create and fill out a Substitute Expense Receipt form, which will print as its own page in your PDF.</p>
         <div class="grid2">
           ${inputField(it, e, "subVendor", "Vendor", { cls: "span2" })}
-          ${textField(it, e, "subItems", "Itemized list", "What you bought, with prices if you know them.", "span2")}
-          ${textField(it, e, "subParticipants", "People attending (meals only)", "Names of everyone the meal was for.", "")}
-          ${textField(it, e, "subReason", "Why there's no receipt", "", "")}
+          <div class="field span2"><span class="lab">Itemized list</span>
+            <div class="tbl-wrap"><table class="sub-tbl">
+              <thead><tr><th>Item purchased</th><th class="r" style="width:150px">Amount</th><th style="width:44px"><span class="sr">Remove</span></th></tr></thead>
+              <tbody id="sub-lines">${subLinesHTML(it)}</tbody>
+              <tfoot><tr><td>Items total</td><td class="r num" id="sub-total"></td><td></td></tr></tfoot>
+            </table></div>
+            <div class="row" style="justify-content:space-between"><button class="btn" type="button" data-act="add-subline">+ Add a line</button><span class="small" id="sub-check" role="status"></span></div>
+            <span class="hint">Include tax and tip as their own lines if they were part of what you paid.</span>
+            ${showErrors && e.subItems ? `<span class="err" id="err-subItems">${esc(e.subItems)}</span>` : `<span class="err" id="err-subItems" hidden></span>`}
+          </div>
+          ${textField(it, e, "subParticipants", "For group meals, list participants:", "", "")}
+          ${textField(it, e, "subReason", "Optional: reason for missing receipt", "", "")}
         </div>
       </div>
+      <div id="drop-slot-bottom">${it.noReceipt ? dropWrapHTML(it) : ""}</div>
     </section>`;
   }
   if (it.type === "mileage") {
@@ -955,11 +987,21 @@ function updateComputed() {
     $("#pd-split").textContent = kinds.map(kd => { const P = CONFIG.perDiem[kd]; return `${P.label} days: breakfast ${Math.round(P.b * 100)}%, lunch ${Math.round(P.l * 100)}%, dinner ${Math.round(P.d * 100)}% of the rate.`; }).join(" ");
   }
   if (it.type === "receipt") {
-    $("#alcohol-note").hidden = !MEAL_WORDS.test(it.description || "");
     const L = it.noReceipt ? RECEIPT_LABELS.sub : RECEIPT_LABELS.rec;
     $("#drop-lab").textContent = L[0]; $("#drop-hint").textContent = L[1];
+    const slot = $(it.noReceipt ? "#drop-slot-bottom" : "#drop-slot-top"), dw = $("#drop-wrap");
+    if (dw && slot && dw.parentElement !== slot) slot.appendChild(dw);
     $("#fx-block").hidden = !it.foreign;
     $("#sub-block").hidden = !it.noReceipt;
+    const st = subTotal(it), amt = round2(it.amount), chk = $("#sub-check");
+    $("#sub-total").textContent = money(st);
+    if (chk) {
+      const anyAmt = (it.subLines || []).some(l => l.amount !== "" && l.amount != null);
+      if (!anyAmt) chk.innerHTML = `<span class="muted">Enter amounts to check them against the expense amount.</span>`;
+      else if (!(amt > 0)) chk.innerHTML = `<span class="muted">Enter the expense amount above to compare.</span>`;
+      else if (st === amt) chk.innerHTML = `<span class="pill ok">Matches the amount above</span>`;
+      else { const d = round2(Math.abs(st - amt)); chk.innerHTML = `<span class="pill warn">${money(d)} ${st < amt ? "less" : "more"} than the ${money(amt)} above</span>`; }
+    }
   }
 }
 
@@ -1002,7 +1044,7 @@ function reviewHTML() {
 }
 
 function downloadHTML() {
-  const warnCount = reviewIssues().filter(x => x.k === "warn").length;
+  const warnCount = state.items.filter(it => it.type !== "perdiem" && receiptStatus(it).k === "warn").length;
   if (pdfResult) {
     return `<section class="panel stack">
       <div class="big-done"><span class="tick">✓</span><div class="stack-sm"><h2>Your PDF is ready</h2>
@@ -1019,7 +1061,7 @@ function downloadHTML() {
   return `<section class="panel stack">
     <div class="stack-sm"><h2>Create your PDF</h2>
       <p class="lead">The PDF has a summary page, any per diem worksheets and substitute receipts, and then every receipt in line order, each labeled with its line number.</p></div>
-    ${warnCount ? `<div class="note warn"><span class="ic">!</span><p>${warnCount} line${warnCount === 1 ? " is" : "s are"} missing a receipt or rate page. You can still create the PDF, but Accounts Payable may send it back.</p></div>` : ""}
+    ${warnCount ? `<div class="note warn"><span class="ic">!</span><p>${warnCount} line${warnCount === 1 ? " is" : "s are"} missing a receipt. You can still create the PDF, but Accounts Payable may send it back.</p></div>` : ""}
     <div class="row"><button class="btn primary" data-act="build" id="build-btn">Create PDF</button></div>
     <div class="progress" id="prog" hidden><div></div></div>
     <p class="small muted" id="prog-msg" role="status"></p>
@@ -1041,7 +1083,7 @@ document.addEventListener("click", async ev => {
   }
   if (act === "add") {
     const t = b.dataset.type, base = { id: uid(), type: t, files: [] };
-    if (t === "receipt") Object.assign(base, { date: "", description: "", purpose: "", amount: "", foreign: false, fxNote: "", noReceipt: false });
+    if (t === "receipt") Object.assign(base, { date: "", description: "", purpose: "", amount: "", foreign: false, fxNote: "", noReceipt: false, subLines: [{ item: "", amount: "" }] });
     if (t === "mileage") Object.assign(base, { date: "", dateEnd: "", multiDay: false, stops: [{ name: "GMRI", address: "350 Commercial St, Portland, ME" }, { name: "", address: "" }], miles: "", roundTrip: true, purpose: "" });
     if (t === "perdiem") Object.assign(base, { purpose: "", start: "", end: "", days: [], locs: [{ id: uid(), kind: "domestic", destination: "", rate: "", rateSource: null, lkCity: "", lkState: "", from: "" }] });
     editing = { item: base, isNew: true }; showErrors = false; render(); scrollTo(0, 0);
@@ -1076,6 +1118,15 @@ document.addEventListener("click", async ev => {
   if (act === "rm-stop" && editing) {
     const it = editing.item; it.stops.splice(+b.dataset.i, 1);
     $("#stops").innerHTML = stopsHTML(it, itemErrors(it)); updateComputed();
+  }
+  if (act === "add-subline" && editing) {
+    const it = editing.item; it.subLines.push({ item: "", amount: "" });
+    $("#sub-lines").innerHTML = subLinesHTML(it); updateComputed();
+    const el = $(`[data-sub="${it.subLines.length - 1}"][data-sk="item"]`); if (el) el.focus();
+  }
+  if (act === "rm-subline" && editing) {
+    const it = editing.item; it.subLines.splice(+b.dataset.i, 1);
+    $("#sub-lines").innerHTML = subLinesHTML(it); updateComputed();
   }
   if (act === "lookup") await gsaLookup(+b.dataset.i);
   if (act === "lk-pick") { applyLookup(+b.dataset.li, lkChoices[+b.dataset.i]); }
@@ -1158,6 +1209,12 @@ function onInput(ev) {
     if (showErrors) { const errs = itemErrors(it); $$("[data-f]", $("#main")).forEach(el => { if (el.type !== "checkbox" && el.type !== "radio") refreshFieldError(el, errs[el.dataset.f]); }); }
     updateComputed();
     return;
+  }
+  if (t.dataset.sub != null) {
+    const l = it.subLines[+t.dataset.sub]; if (!l) return;
+    l[t.dataset.sk] = t.value;
+    if (showErrors) { const m = itemErrors(it).subItems, el = $("#err-subItems"); if (el) { el.textContent = m || ""; el.hidden = !m; } }
+    updateComputed(); return;
   }
   if (t.dataset.loc != null) {
     const i = +t.dataset.loc, L = it.locs[i], k = t.dataset.lk; if (!L) return;
@@ -1411,7 +1468,8 @@ async function buildPdf(onProgress) {
     typeL.forEach((l, j) => txt(l, colX[2] + 4, ty - j * 10.5, { size: 8 }));
     descL.forEach((l, j) => txt(l, colX[3] + 4, ty - j * 10.5, { size: 8.5, font: B }));
     purpL.forEach((l, j) => txt(l, colX[3] + 4, ty - (descL.length + j) * 10.5, { size: 8, color: C.muted }));
-    txt(it.type === "perdiem" ? (st.k === "ok" ? "Worksheet" : "Rate pg MISSING") : it.type === "mileage" ? (st.k === "ok" ? "Backup attached" : "Not needed") : rs[st.k], colX[4] + 4, ty, { size: 7.5, font: st.k === "warn" ? B : F, color: st.k === "warn" ? C.warn : C.ink });
+    const flag = st.k === "warn" && it.type !== "perdiem";
+    txt(it.type === "perdiem" ? "Worksheet" : it.type === "mileage" ? (st.k === "ok" ? "Backup attached" : "Not needed") : rs[st.k], colX[4] + 4, ty, { size: 7.5, font: flag ? B : F, color: flag ? C.warn : C.ink });
     txt(money(itemAmount(it)), colX[5] + 4, ty, { size: 8.5, align: "right", width: cols[5].w - 8 });
     y -= h; hr(y);
   });
@@ -1476,7 +1534,7 @@ async function buildPdf(onProgress) {
     if (!(it.type === "receipt" && it.noReceipt)) return;
     newPage(`Substitute Expense Receipt - Line ${idx + 1}`);
     y -= 8;
-    const fields = [["Employee name", state.name], ["Today's date", fmtDate(todayISO())], ["Date of expense", fmtDate(it.date)], ["Vendor", it.subVendor], ["Description", it.description], ["Business purpose", it.purpose], ["Itemized list", it.subItems], ["Participants", it.subParticipants || "-"], ["Why no receipt", it.subReason], ["Total on receipt", money(itemAmount(it))]];
+    const fields = [["Employee name", state.name], ["Today's date", fmtDate(todayISO())], ["Date of expense", fmtDate(it.date)], ["Vendor", it.subVendor], ["Description", it.description], ["Business purpose", it.purpose], ["Itemized list", (it.subLines || []).filter(l => String(l.item || "").trim() || l.amount !== "").map(l => `${String(l.item || "").trim() || "(item)"}${l.amount !== "" && l.amount != null ? "  -  " + money(Number(l.amount) || 0) : ""}`).join("\n") + `\nItems total: ${money(subTotal(it))}`], ["Participants", it.subParticipants || "-"], ["Reason for missing receipt", it.subReason || "-"], ["Total on receipt", money(itemAmount(it))]];
     fields.forEach(([k, v]) => {
       const vl = wrap(v || "", k === "Total on receipt" ? B : F, 10, W - 2 * M - 130);
       ensure(vl.length * 13 + 12);
@@ -1583,7 +1641,7 @@ function loadExample() {
   state.items = [
     { id: uid(), type: "receipt", date: d(8), description: "Registration, Northeast Coastal Science Symposium", purpose: "Presenting lobster settlement results", amount: 350, foreign: false, fxNote: "", noReceipt: false, files: [] },
     { id: uid(), type: "mileage", date: d(9), stops: [{ name: "GMRI", address: "350 Commercial St, Portland, ME" }, { name: "Maine DMR", address: "32 Blossom Ln, Augusta, ME" }], miles: 118, roundTrip: true, purpose: "Meeting with Maine DMR on survey permits", files: [] },
-    { id: uid(), type: "receipt", date: d(10), description: "Parking, Augusta Civic Center", purpose: "DMR meeting", amount: 12, foreign: false, fxNote: "", noReceipt: true, subVendor: "Augusta Civic Center lot", subItems: "Day parking, $12.00", subParticipants: "", subReason: "Pay station did not print a receipt", files: [] },
+    { id: uid(), type: "receipt", date: d(10), description: "Parking, Augusta Civic Center", purpose: "DMR meeting", amount: 12, foreign: false, fxNote: "", noReceipt: true, subVendor: "Augusta Civic Center lot", subLines: [{ item: "Day parking", amount: 12 }], subParticipants: "", subReason: "Pay station did not print a receipt", files: [] },
     { id: uid(), type: "perdiem", purpose: "Joint sampling cruise planning and partner workshop", start: d(14), end: d(17), files: [],
       locs: [{ id: uid(), kind: "domestic", destination: "Woods Hole, MA", rate: 74, rateSource: null, lkCity: "Woods Hole", lkState: "MA", from: d(14) },
              { id: uid(), kind: "intl", destination: "Halifax, Canada", rate: 150, rateSource: null, lkCity: "", lkState: "", from: d(16) }],
